@@ -11,7 +11,10 @@ st.set_page_config(page_title="NeuroDelineate - Medical Suite", layout="wide")
 # --- Helper Functions ---
 @st.cache_resource
 def load_nifti_data(patient_id):
-    base_path = f"data/{patient_id}/{patient_id}"
+    if os.path.exists(f"data/{patient_id}"):
+        base_path = f"data/{patient_id}/{patient_id}"
+    else:
+        base_path = f"sample_data/{patient_id}/{patient_id}"
     flair_nii = nib.load(f"{base_path}_flair.nii.gz")
     seg_nii = nib.load(f"{base_path}_seg.nii.gz")
     
