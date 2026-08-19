@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+data/
+*.nii
+*.nii.gz
+.streamlit/
+*.pdf
+frontend/node_modules/
+frontend/dist/
+.DS_Store
