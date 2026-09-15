@@ -37,6 +37,16 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
+Create a small synthetic study for local UI testing:
+
+```bash
+python scripts/create_demo_data.py
+```
+
+This creates `data/BraTS2021_00621/` with synthetic FLAIR and segmentation files
+matching the dashboard's expected paths. The generated data is not derived from
+patients and must not be used for clinical validation.
+
 Run the test suite:
 
 ```bash
