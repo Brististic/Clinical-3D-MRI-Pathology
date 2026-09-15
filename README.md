@@ -1,86 +1,54 @@
-# NeuroDelineate: Clinical 3D MRI Pathology Segmentation & Diagnostic Suite
+﻿# NeuroDelineate: Clinical 3D MRI Pathology Segmentation & Diagnostic Suite
 
-An end-to-end medical image processing platform designed for automated lesion delineation, volumetric quantification, and standardized diagnostic report generation from 3D multi-modal MRI scans (BraTS Dataset). Built entirely using classical Digital Image Processing (DIP) algorithms and Python.
+This project provides a classical image-processing workflow for 3D MRI pathology segmentation, volumetric analysis, and automated report generation.
 
----
+## Features
 
-## Key Features
+- 3D MRI slice traversal and intensity normalization
+- Statistical region growing with morphological cleanup
+- GrabCut-based foreground/background segmentation
+- Volume and lesion metric calculations
+- Clinical PDF report generation
+- Streamlit-based diagnostic dashboard
 
-* **3D Volumetric Traversal:** Real-time slice scrubbing across 155-slice axial brain scans with dynamic intensity windowing and pseudo-color thermal heatmaps.
-* **Classical Segmentation Engine:** Automated statistical homogeneity region growing with adaptive thresholding ($k \cdot \sigma$) and morphological post-processing (closing, opening, and connected component filtering).
-* **Multi-Domain Preprocessing:** Spatial-domain Contrast Limited Adaptive Histogram Equalization (CLAHE) and Frequency-Domain 2D Discrete Fourier Transform (2D-DFT) Gaussian high-pass filtering for edge enhancement.
-* **Quantitative Validation:** Automated slice-level and volume-level evaluation against expert radiologist ground truth using Dice Similarity Coefficient (DSC) and Jaccard Index (IoU).
-* **True Volumetric Calculation:** Converts pixel voxel volumes into clinical metric units ($\text{cm}^3$) using NIfTI coordinate affine matrices.
-* **Automated Clinical PDF Export:** Generates signed, hospital-ready diagnostic summary reports containing embedded patient metadata, quantitative findings, and multi-panel pathology overlays via ReportLab.
+## Project structure
 
----
+- `src/` contains reusable segmentation and IO logic
+- `dashboard.py` launches the interactive visual diagnostic interface
+- `test_graph_cut.py` contains the original prototype comparison script
+- `tests/` contains a real pytest suite for validation
 
-## Mathematical Formulations
+## Local setup
 
-### 1. Statistical Homogeneity Criterion
-A candidate pixel $(r, c)$ is merged into the region $R$ if:
-$$\vert{}I(r, c) - \mu_R\vert{} \le k \cdot \sigma_R$$
-Where $\mu_R$ and $\sigma_R$ denote the running mean and standard deviation of the segmented region, and $k$ is the sensitivity multiplier.
+Create and activate a virtual environment:
 
-### 2. Validation Metrics
-* **Dice Similarity Coefficient (DSC):**
-  $$\text{DSC} = \frac{2 \vert{}A \cap B\vert{}}{\vert{}A\vert{} + \vert{}B\vert{}}$$
-* **Jaccard Index (IoU):**
-  $$\text{IoU} = \frac{\vert{}A \cap B\vert{}}{\vert{}A \cup B\vert{}}$$
+```bash
+python -m venv .venv
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+# Linux/macOS
+source .venv/bin/activate
+```
 
-### 3. Physical Volumetric Integration
-$$\text{Volume } (\text{cm}^3) = \frac{N_{\text{voxels}} \times (v_x \times v_y \times v_z)}{1000}$$
-Where $v_x, v_y, v_z$ represent the spatial voxel dimensions in millimeters extracted from the NIfTI header.
+Install dependencies:
 
----
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-## Project Structure
+Run the test suite:
 
-```text
-medical-segmentation-suite/
-│
-├── data/                               <-- NIfTI BraTS patient scans (.nii.gz)
-│   └── BraTS2021_00621/
-│
-├── src/
-│   ├── io/
-│   │   ├── data_loader.py              <-- 3D volume parser & intensity normalizer
-│   │   └── report_generator.py         <-- In-memory clinical PDF engine
-│   ├── filters/
-│   │   └── enhancement.py              <-- 2D-DFT & CLAHE implementations
-│   ├── segmentation/
-│   │   ├── region_growing.py           <-- Statistical region growing algorithm
-│   │   └── graph_cut.py                <-- OpenCV Graph-Cut energy minimization
-│   ├── metrics/
-│   │   └── evaluation.py               <-- DSC, IoU, and Hausdorff distance
-│   └── compression/
-│       └── codecs.py                   <-- Huffman lossless & DCT lossy codecs
-│
-├── dashboard.py                        <-- Interactive Streamlit clinical interface
-├── requirements.txt                    <-- Environment dependencies
-├── .gitignore
-└── README.md
+```bash
+python -m pytest -q
+```
 
-Quickstart & Installation
-1. Clone the Repository
-Bash
-git clone [https://github.com/Brististic/Clinical-3D-MRI-Pathology.git]
-cd medical-segmentation-suite
+Run the dashboard:
 
-2. Set Up Virtual Environment
-Bash
-# Windows (PowerShell)
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# Linux / macOS
-python3 -m venv venv
-source venv/bin/activate
-
-3. Install Dependencies
-Bash
-pip install -r requirements.txt
-
-4. Launch the Clinical Diagnostic Dashboard
-Bash
+```bash
 streamlit run dashboard.py
+```
+
+## CI
+
+The repository includes a GitHub Actions workflow under `.github/workflows/pytest.yml` that runs the test suite on every push and pull request.
