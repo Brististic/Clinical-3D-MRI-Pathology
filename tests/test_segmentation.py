@@ -1,6 +1,15 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import nibabel as nib
 import numpy as np
 
-from src.io.data_loader import get_normalized_slice
+from src.io.data_loader import (
+    get_normalized_slice,
+    load_nifti_bytes,
+    validate_volume_pair,
+)
+from src.metrics.evaluation import compute_metrics
 from src.segmentation.graph_cut import graph_cut_segmentation
 from src.segmentation.region_growing import refine_mask, statistical_region_growing
 
@@ -54,3 +63,26 @@ def test_graph_cut_segmentation_returns_binary_mask():
     assert mask.shape == img.shape
     assert set(np.unique(mask)).issubset({0, 1})
     assert mask.sum() > 0
+
+
+def test_load_nifti_bytes_reads_uploaded_volume():
+    data = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+    with TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "volume.nii"
+        nib.save(nib.Nifti1Image(data, np.eye(4)), path)
+        file_data = path.read_bytes()
+
+    loaded, header = load_nifti_bytes(file_data)
+
+    np.testing.assert_array_equal(loaded, data)
+    assert header.get_zooms()[:3] == (1.0, 1.0, 1.0)
+
+
+def test_validate_volume_pair_rejects_mismatched_shapes():
+    with np.testing.assert_raises(ValueError):
+        validate_volume_pair(np.zeros((4, 4, 4)), np.zeros((4, 4, 3)))
+
+
+def test_compute_metrics_rejects_mismatched_masks():
+    with np.testing.assert_raises(ValueError):
+        compute_metrics(np.zeros((4, 4), dtype=np.uint8), np.zeros((4, 5), dtype=np.uint8))

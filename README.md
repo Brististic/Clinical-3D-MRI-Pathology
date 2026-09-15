@@ -53,6 +53,18 @@ Run the test suite:
 python -m pytest -q
 ```
 
+## Using an authorized patient study
+
+The dashboard also supports local NIfTI uploads, so patient data does not need
+to be committed to GitHub. Start the dashboard, select **Upload NIfTI files**,
+and provide a 3D FLAIR `.nii`/`.nii.gz` file. A matching segmentation label is
+optional; it enables Dice, IoU, and reference-guided volume analysis.
+
+Uploaded FLAIR and label volumes must have the same 3D dimensions. The
+application validates this before processing. Do not upload patient data to
+untrusted environments, and do not treat the prototype's output as a clinical
+diagnosis.
+
 Run the dashboard:
 
 ```bash

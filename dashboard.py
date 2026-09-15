@@ -7,6 +7,16 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from collections import deque
 from scipy import ndimage
+from src.io.data_loader import (
+    get_normalized_slice,
+    load_nifti_bytes,
+    validate_volume_pair,
+)
+from src.metrics.evaluation import compute_metrics as compute_mask_metrics
+from src.segmentation.region_growing import (
+    refine_mask,
+    statistical_region_growing,
+)
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle, HRFlowable
@@ -59,66 +69,31 @@ def load_nifti_data(patient_id):
     
     return flair_data, gt_data, voxel_dims, voxel_vol
 
+
+def load_uploaded_data(flair_file, segmentation_file=None):
+    flair_data, flair_header = load_nifti_bytes(flair_file)
+    gt_data = None
+    if segmentation_file is not None:
+        gt_data, _ = load_nifti_bytes(segmentation_file)
+        validate_volume_pair(flair_data, gt_data)
+        gt_data = (gt_data > 0).astype(np.uint8)
+    if flair_data.ndim != 3:
+        raise ValueError("The uploaded FLAIR file must contain a 3D volume.")
+    voxel_dims = flair_header.get_zooms()[:3]
+    voxel_vol = float(np.prod(voxel_dims))
+    return flair_data, gt_data, voxel_dims, voxel_vol
+
+
 def get_norm_slice(volume, idx):
-    sl = volume[:, :, idx]
-    min_v, max_v = np.min(sl), np.max(sl)
-    if max_v > min_v:
-        return ((sl - min_v) / (max_v - min_v) * 255.0).astype(np.uint8)
-    return np.zeros_like(sl, dtype=np.uint8)
+    return get_normalized_slice(volume, idx)
 
 def region_growing(img, seed, std_multiplier=1.7):
-    rows, cols = img.shape
-    mask = np.zeros((rows, cols), dtype=np.uint8)
-    visited = np.zeros((rows, cols), dtype=bool)
-    queue = deque([seed])
-    visited[seed[0], seed[1]] = True
-    region_pixels = [float(img[seed[0], seed[1]])]
-    
-    neighbors = [(-1, -1), (-1, 0), (-1, 1),
-                 ( 0, -1),          ( 0, 1),
-                 ( 1, -1), ( 1, 0), ( 1, 1)]
-    
-    count = 0
-    while queue and count < 25000:
-        r, c = queue.popleft()
-        mask[r, c] = 1
-        count += 1
-        mean_v = np.mean(region_pixels)
-        std_v = max(np.std(region_pixels), 8.0)
-        
-        for dr, dc in neighbors:
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols and not visited[nr, nc]:
-                visited[nr, nc] = True
-                val = float(img[nr, nc])
-                if abs(val - mean_v) <= (std_multiplier * std_v) and val > 20:
-                    region_pixels.append(val)
-                    queue.append((nr, nc))
-                    
-    # Morphological Refinement via SciPy (No OpenCV required)
-    struct = ndimage.generate_binary_structure(2, 2)
-    closed = ndimage.binary_closing(mask, structure=struct, iterations=3)
-    opened = ndimage.binary_opening(closed, structure=struct, iterations=1)
-    
-    labeled, num_features = ndimage.label(opened)
-    if num_features > 0:
-        sizes = ndimage.sum(opened, labeled, range(1, num_features + 1))
-        max_label = 1 + int(np.argmax(sizes))
-        opened = (labeled == max_label).astype(np.uint8)
-    else:
-        opened = opened.astype(np.uint8)
-        
-    return opened
+    return refine_mask(
+        statistical_region_growing(img, seed, std_multiplier=std_multiplier)
+    )
 
 def compute_metrics(pred, gt):
-    inter = np.sum((pred == 1) & (gt == 1))
-    tot_pred, tot_gt = np.sum(pred == 1), np.sum(gt == 1)
-    if tot_pred + tot_gt == 0:
-        return 1.0, 1.0
-    dice = (2.0 * inter) / (tot_pred + tot_gt)
-    union = tot_pred + tot_gt - inter
-    iou = inter / union if union > 0 else 0.0
-    return dice, iou
+    return compute_mask_metrics(pred, gt)
 
 def generate_clinical_pdf(patient_id, slice_idx, dice_score, iou_score, pred_vol, gt_vol, fig_matplotlib):
     buffer = io.BytesIO()
@@ -194,18 +169,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-patient_id = "BraTS2021_00621"
-try:
-    flair_vol, gt_vol, dims, voxel_vol = load_nifti_data(patient_id)
-except (FileNotFoundError, OSError) as exc:
-    st.error("MRI data could not be loaded. Add the BraTS files under data/BraTS2021_00621/ and reload.")
-    st.exception(exc)
-    st.stop()
-
 with st.sidebar:
     st.header("Review setup")
-    st.caption("Current study")
-    st.text_input("Patient identifier", patient_id, disabled=True)
+    source = st.radio("Study source", ["Local demo study", "Upload NIfTI files"])
+    patient_id = "BraTS2021_00621"
+    flair_upload = None
+    segmentation_upload = None
+    if source == "Upload NIfTI files":
+        patient_id = st.text_input("Patient identifier", "Uploaded study")
+        flair_upload = st.file_uploader("FLAIR image (.nii/.nii.gz)", type=["nii", "gz"])
+        segmentation_upload = st.file_uploader(
+            "Segmentation label (optional)", type=["nii", "gz"]
+        )
+    else:
+        st.caption("Current study")
+        st.text_input("Patient identifier", patient_id, disabled=True)
+    try:
+        if source == "Upload NIfTI files":
+            if flair_upload is None:
+                st.info("Upload a FLAIR volume to begin.")
+                st.stop()
+            flair_vol, gt_vol, dims, voxel_vol = load_uploaded_data(
+                flair_upload, segmentation_upload
+            )
+        else:
+            flair_vol, gt_vol, dims, voxel_vol = load_nifti_data(patient_id)
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        st.error("The study could not be loaded. Check that the NIfTI files are valid and compatible.")
+        st.exception(exc)
+        st.stop()
+
     slice_idx = st.slider("Axial slice", 0, flair_vol.shape[2] - 1, min(80, flair_vol.shape[2] - 1))
     color_mode = st.radio("Image display", ["Grayscale", "Thermal Heatmap"], horizontal=False)
     std_mult = st.slider("Region-growing sensitivity (k·σ)", 1.0, 3.0, 1.7, 0.1)
@@ -216,7 +209,8 @@ with st.sidebar:
     st.caption("Prototype output should be reviewed by a qualified clinician.")
 
 norm_slice = get_norm_slice(flair_vol, slice_idx)
-slice_gt = gt_vol[:, :, slice_idx]
+has_reference = gt_vol is not None
+slice_gt = gt_vol[:, :, slice_idx] if has_reference else np.zeros_like(norm_slice)
 gt_coords = np.argwhere(slice_gt == 1)
 if len(gt_coords) > 0:
     vals = [norm_slice[r, c] for r, c in gt_coords]
@@ -226,11 +220,11 @@ else:
 
 with st.spinner("Segmenting selected slice..."):
     pred_mask = region_growing(norm_slice, seed_pt, std_multiplier=std_mult)
-dice, iou = compute_metrics(pred_mask, slice_gt)
+dice, iou = compute_metrics(pred_mask, slice_gt) if has_reference else (None, None)
 
 metric_cols = st.columns(4)
-metric_cols[0].metric("Dice similarity", f"{dice:.4f}")
-metric_cols[1].metric("Jaccard / IoU", f"{iou:.4f}")
+metric_cols[0].metric("Dice similarity", f"{dice:.4f}" if dice is not None else "N/A")
+metric_cols[1].metric("Jaccard / IoU", f"{iou:.4f}" if iou is not None else "N/A")
 metric_cols[2].metric("Predicted area", f"{int(pred_mask.sum()):,} px")
 metric_cols[3].metric("Selected slice", f"{slice_idx} / {flair_vol.shape[2] - 1}")
 
@@ -255,7 +249,9 @@ volume_tab, export_tab = st.tabs(["3D volume analysis", "Clinical export"])
 with volume_tab:
     st.subheader("Full-volume analysis")
     st.caption("Runs the same region-growing workflow across slices containing reference pathology.")
-    if st.button("Compute full 3D volume", type="primary"):
+    if not has_reference:
+        st.info("Upload a segmentation label to enable reference-guided full-volume analysis.")
+    elif st.button("Compute full 3D volume", type="primary"):
         with st.spinner(f"Processing {flair_vol.shape[2]} slices..."):
             pred_count = 0
             gt_count = int(np.sum(gt_vol == 1))
@@ -286,7 +282,15 @@ with export_tab:
     g_vol_val = st.session_state.get("gt_vol", 0.0)
     if st.button("Prepare PDF report"):
         with st.spinner("Generating clinical document..."):
-            pdf_bytes = generate_clinical_pdf(patient_id, slice_idx, dice, iou, p_vol_val, g_vol_val, fig)
+            pdf_bytes = generate_clinical_pdf(
+                patient_id,
+                slice_idx,
+                dice or 0.0,
+                iou or 0.0,
+                p_vol_val,
+                g_vol_val,
+                fig,
+            )
             st.download_button(
                 "Download diagnostic PDF",
                 data=pdf_bytes,
