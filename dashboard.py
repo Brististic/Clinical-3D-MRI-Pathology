@@ -14,6 +14,32 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 st.set_page_config(page_title="NeuroDelineate - Medical Suite", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2rem; padding-bottom: 3rem; }
+    .hero { padding: 1.25rem 1.5rem; border-radius: 16px; background: linear-gradient(135deg, #0f172a, #164e63); color: white; margin-bottom: 1.25rem; }
+    .hero h1 { margin: 0; font-size: 2rem; }
+    .hero p { color: #cbd5e1; margin: .35rem 0 0; }
+    div[data-testid="stMetric"] {
+        background: #f8fafc !important;
+        border: 1px solid #e2e8f0;
+        padding: .75rem;
+        border-radius: 12px;
+        color: #0f172a !important;
+    }
+    div[data-testid="stMetric"] label,
+    div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+    div[data-testid="stMetric"] [data-testid="stMetricValue"],
+    div[data-testid="stMetric"] [data-testid="stMetricDelta"],
+    div[data-testid="stMetric"] p {
+        color: #0f172a !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # --- Helper Functions ---
 @st.cache_resource
 def load_nifti_data(patient_id):
@@ -158,25 +184,79 @@ def generate_clinical_pdf(patient_id, slice_idx, dice_score, iou_score, pred_vol
     return buffer
 
 # --- App UI ---
-st.title("🧠 NeuroDelineate — Clinical Diagnostic Web Suite")
-st.caption("Classical Digital Image Processing & 3D Volumetric Engine")
+st.markdown(
+    """
+    <div class="hero">
+        <h1>NeuroDelineate</h1>
+        <p>Clinical MRI review workspace for classical segmentation and volumetric validation</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 patient_id = "BraTS2021_00621"
-flair_vol, gt_vol, dims, voxel_vol = load_nifti_data(patient_id)
+try:
+    flair_vol, gt_vol, dims, voxel_vol = load_nifti_data(patient_id)
+except (FileNotFoundError, OSError) as exc:
+    st.error("MRI data could not be loaded. Add the BraTS files under data/BraTS2021_00621/ and reload.")
+    st.exception(exc)
+    st.stop()
 
-col_ctrl, col_main = st.columns([1, 3])
-
-with col_ctrl:
-    st.subheader("Controls")
-    slice_idx = st.slider("Select Axial Slice", 0, flair_vol.shape[2] - 1, 80)
-    color_mode = st.selectbox("Color Mapping", ["Grayscale", "Thermal Heatmap"])
-    std_mult = st.slider("Region Growing Sensitivity (k·σ)", 1.0, 3.0, 1.7, 0.1)
-    
+with st.sidebar:
+    st.header("Review setup")
+    st.caption("Current study")
+    st.text_input("Patient identifier", patient_id, disabled=True)
+    slice_idx = st.slider("Axial slice", 0, flair_vol.shape[2] - 1, min(80, flair_vol.shape[2] - 1))
+    color_mode = st.radio("Image display", ["Grayscale", "Thermal Heatmap"], horizontal=False)
+    std_mult = st.slider("Region-growing sensitivity (k·σ)", 1.0, 3.0, 1.7, 0.1)
     st.divider()
-    st.write(f"**Voxel Spacing:** `{dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f} mm`")
-    
-    if st.button("🚀 Compute Full 3D Volume"):
-        with st.spinner("Processing 155 slices..."):
+    st.caption("Acquisition")
+    st.write(f"**Volume:** `{flair_vol.shape[0]} × {flair_vol.shape[1]} × {flair_vol.shape[2]}`")
+    st.write(f"**Voxel spacing:** `{dims[0]:.2f} × {dims[1]:.2f} × {dims[2]:.2f} mm`")
+    st.caption("Prototype output should be reviewed by a qualified clinician.")
+
+norm_slice = get_norm_slice(flair_vol, slice_idx)
+slice_gt = gt_vol[:, :, slice_idx]
+gt_coords = np.argwhere(slice_gt == 1)
+if len(gt_coords) > 0:
+    vals = [norm_slice[r, c] for r, c in gt_coords]
+    seed_pt = tuple(gt_coords[np.argmax(vals)])
+else:
+    seed_pt = (norm_slice.shape[0] // 2, norm_slice.shape[1] // 2)
+
+with st.spinner("Segmenting selected slice..."):
+    pred_mask = region_growing(norm_slice, seed_pt, std_multiplier=std_mult)
+dice, iou = compute_metrics(pred_mask, slice_gt)
+
+metric_cols = st.columns(4)
+metric_cols[0].metric("Dice similarity", f"{dice:.4f}")
+metric_cols[1].metric("Jaccard / IoU", f"{iou:.4f}")
+metric_cols[2].metric("Predicted area", f"{int(pred_mask.sum()):,} px")
+metric_cols[3].metric("Selected slice", f"{slice_idx} / {flair_vol.shape[2] - 1}")
+
+st.subheader("Slice review")
+st.caption("Compare the source image, reference annotation, and algorithm output. The green marker shows the automatically selected seed.")
+fig, axes = plt.subplots(1, 3, figsize=(15, 5), constrained_layout=True)
+axes[0].imshow(norm_slice, cmap="turbo" if color_mode == "Thermal Heatmap" else "gray")
+axes[0].plot(seed_pt[1], seed_pt[0], "go", markersize=6)
+axes[0].set_title("FLAIR source")
+axes[1].imshow(slice_gt, cmap="autumn")
+axes[1].set_title("Reference mask")
+axes[2].imshow(norm_slice, cmap="gray")
+axes[2].imshow(np.ma.masked_where(pred_mask == 0, pred_mask), cmap="spring", alpha=0.65)
+axes[2].set_title("Predicted overlay")
+for ax in axes:
+    ax.axis("off")
+st.pyplot(fig, use_container_width=True)
+
+st.divider()
+volume_tab, export_tab = st.tabs(["3D volume analysis", "Clinical export"])
+
+with volume_tab:
+    st.subheader("Full-volume analysis")
+    st.caption("Runs the same region-growing workflow across slices containing reference pathology.")
+    if st.button("Compute full 3D volume", type="primary"):
+        with st.spinner(f"Processing {flair_vol.shape[2]} slices..."):
             pred_count = 0
             gt_count = int(np.sum(gt_vol == 1))
             for z in range(flair_vol.shape[2]):
@@ -186,79 +266,31 @@ with col_ctrl:
                     sl_img = get_norm_slice(flair_vol, z)
                     vals = [sl_img[r, c] for r, c in coords]
                     best_seed = tuple(coords[np.argmax(vals)])
-                    m = region_growing(sl_img, best_seed, std_mult)
-                    pred_count += int(np.sum(m == 1))
-            
+                    pred_count += int(np.sum(region_growing(sl_img, best_seed, std_mult) == 1))
             p_vol = (pred_count * voxel_vol) / 1000.0
             g_vol = (gt_count * voxel_vol) / 1000.0
-            
-            st.session_state['pred_vol'] = p_vol
-            st.session_state['gt_vol'] = g_vol
-            
-            st.success(f"**Predicted 3D Volume:** {p_vol:.2f} cm³")
-            st.info(f"**Ground Truth Volume:** {g_vol:.2f} cm³")
-            st.warning(f"**Volumetric Error:** {abs(p_vol - g_vol):.2f} cm³")
-
-with col_main:
-    norm_slice = get_norm_slice(flair_vol, slice_idx)
-    slice_gt = gt_vol[:, :, slice_idx]
-    
-    gt_coords = np.argwhere(slice_gt == 1)
-    if len(gt_coords) > 0:
-        vals = [norm_slice[r, c] for r, c in gt_coords]
-        seed_pt = tuple(gt_coords[np.argmax(vals)])
+            st.session_state["pred_vol"] = p_vol
+            st.session_state["gt_vol"] = g_vol
+    if "pred_vol" in st.session_state:
+        v1, v2, v3 = st.columns(3)
+        v1.metric("Predicted volume", f"{st.session_state['pred_vol']:.2f} cm³")
+        v2.metric("Reference volume", f"{st.session_state['gt_vol']:.2f} cm³")
+        v3.metric("Absolute difference", f"{abs(st.session_state['pred_vol'] - st.session_state['gt_vol']):.2f} cm³")
     else:
-        seed_pt = (120, 120)
-        
-    pred_mask = region_growing(norm_slice, seed_pt, std_multiplier=std_mult)
-    dice, iou = compute_metrics(pred_mask, slice_gt)
-    
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Dice Score (DSC)", f"{dice:.4f}")
-    m2.metric("IoU (Jaccard)", f"{iou:.4f}")
-    m3.metric("Pathology Detected", "Yes" if np.sum(pred_mask) > 0 else "No")
-    
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
-    if color_mode == "Thermal Heatmap":
-        axes[0].imshow(norm_slice, cmap="turbo")
-    else:
-        axes[0].imshow(norm_slice, cmap="gray")
-    axes[0].plot(seed_pt[1], seed_pt[0], 'go', markersize=6)
-    axes[0].set_title(f"FLAIR Slice #{slice_idx}")
-    
-    axes[1].imshow(slice_gt, cmap="autumn")
-    axes[1].set_title("Ground Truth Mask")
-    
-    axes[2].imshow(norm_slice, cmap="gray")
-    masked_pred = np.ma.masked_where(pred_mask == 0, pred_mask)
-    axes[2].imshow(masked_pred, cmap="spring", alpha=0.6)
-    axes[2].set_title("Segmented Pathology Overlay")
-    
-    for ax in axes:
-        ax.axis("off")
-        
-    st.pyplot(fig)
+        st.info("Run the volume analysis to populate the 3D findings.")
 
-    st.divider()
-    st.subheader("📄 Clinical Export")
-    p_vol_val = st.session_state.get('pred_vol', 0.0)
-    g_vol_val = st.session_state.get('gt_vol', 0.0)
-    
-    if st.button("📄 Prepare PDF Report"):
+with export_tab:
+    st.subheader("Clinical export")
+    st.caption("Generate a PDF snapshot of the selected slice and the latest volume findings.")
+    p_vol_val = st.session_state.get("pred_vol", 0.0)
+    g_vol_val = st.session_state.get("gt_vol", 0.0)
+    if st.button("Prepare PDF report"):
         with st.spinner("Generating clinical document..."):
-            pdf_bytes = generate_clinical_pdf(
-                patient_id=patient_id,
-                slice_idx=slice_idx,
-                dice_score=dice,
-                iou_score=iou,
-                pred_vol=p_vol_val,
-                gt_vol=g_vol_val,
-                fig_matplotlib=fig
-            )
+            pdf_bytes = generate_clinical_pdf(patient_id, slice_idx, dice, iou, p_vol_val, g_vol_val, fig)
             st.download_button(
-                label="⬇️ Download Signed Diagnostic PDF",
+                "Download diagnostic PDF",
                 data=pdf_bytes,
                 file_name=f"Report_{patient_id}_slice{slice_idx}.pdf",
-                mime="application/pdf"
+                mime="application/pdf",
+                type="primary",
             )
