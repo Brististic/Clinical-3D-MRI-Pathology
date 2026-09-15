@@ -21,7 +21,20 @@ st.markdown(
     .hero { padding: 1.25rem 1.5rem; border-radius: 16px; background: linear-gradient(135deg, #0f172a, #164e63); color: white; margin-bottom: 1.25rem; }
     .hero h1 { margin: 0; font-size: 2rem; }
     .hero p { color: #cbd5e1; margin: .35rem 0 0; }
-    div[data-testid="stMetric"] { background: #f8fafc; border: 1px solid #e2e8f0; padding: .75rem; border-radius: 12px; }
+    div[data-testid="stMetric"] {
+        background: #f8fafc !important;
+        border: 1px solid #e2e8f0;
+        padding: .75rem;
+        border-radius: 12px;
+        color: #0f172a !important;
+    }
+    div[data-testid="stMetric"] label,
+    div[data-testid="stMetric"] [data-testid="stMetricLabel"],
+    div[data-testid="stMetric"] [data-testid="stMetricValue"],
+    div[data-testid="stMetric"] [data-testid="stMetricDelta"],
+    div[data-testid="stMetric"] p {
+        color: #0f172a !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
