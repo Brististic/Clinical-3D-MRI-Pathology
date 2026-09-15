@@ -47,6 +47,9 @@ This creates `data/BraTS2021_00621/` with synthetic FLAIR and segmentation files
 matching the dashboard's expected paths. The generated data is not derived from
 patients and must not be used for clinical validation.
 
+If the dashboard is deployed without the ignored `data/` directory, it creates
+this same synthetic demo study automatically on first launch.
+
 Run the test suite:
 
 ```bash

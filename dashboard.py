@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from collections import deque
 from scipy import ndimage
+from scripts.create_demo_data import create_demo_volume
 from src.io.data_loader import (
     get_normalized_slice,
     load_nifti_bytes,
@@ -58,8 +59,22 @@ def load_nifti_data(patient_id):
     else:
         base_path = f"sample_data/{patient_id}/{patient_id}"
 
-    flair_nii = nib.load(f"{base_path}_flair.nii.gz")
-    seg_nii = nib.load(f"{base_path}_seg.nii.gz")
+    flair_path = f"{base_path}_flair.nii.gz"
+    seg_path = f"{base_path}_seg.nii.gz"
+    if not (os.path.exists(flair_path) and os.path.exists(seg_path)):
+        if patient_id != "BraTS2021_00621":
+            raise FileNotFoundError(
+                f"Demo data is unavailable for patient '{patient_id}'."
+            )
+        output_dir = os.path.dirname(flair_path)
+        os.makedirs(output_dir, exist_ok=True)
+        flair_data, segmentation = create_demo_volume()
+        affine = np.diag([1.0, 1.0, 3.0, 1.0])
+        nib.save(nib.Nifti1Image(flair_data, affine), flair_path)
+        nib.save(nib.Nifti1Image(segmentation, affine), seg_path)
+
+    flair_nii = nib.load(flair_path)
+    seg_nii = nib.load(seg_path)
     
     flair_data = flair_nii.get_fdata(dtype=np.float32)
     gt_data = (seg_nii.get_fdata(dtype=np.float32) > 0).astype(np.uint8)
